@@ -1,0 +1,28 @@
+include:
+  - component: $CI_SERVER_FQDN/library/cicd/auto-gitlab/auto-release@main
+  - local: '.gitlab-ci.sign.yml'
+
+variables:
+  CI_DEBUG_TRACE: "false"
+  EXAMPLE_ENV_SRC: "gitlab-registry.fizn.ru/library/docker-images/local-tests/helm-install"
+  EXAMPLE_ENV_DEST: "$CI_REGISTRY_IMAGE/sign-example"
+
+  GITLAB_HOST: "${CI_SERVER_URL}"
+  GITLAB_TOKEN: "${SIGN_TOKEN}"
+ 
+stages:
+  - test
+  - sign
+  - auto-gitlab
+
+.utils:toolkit:shared:auto-release-RELEASE-md:
+  - |
+    cat > RELEASE.md <<EOF
+    # Release ${CI_COMMIT_TAG}
+
+    ## Features
+    
+    ### sign-core
+      Шаблон для подписи и аттестации oci репозиториев с проверкой.
+    ---
+    EOF

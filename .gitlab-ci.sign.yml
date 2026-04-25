@@ -1,0 +1,84 @@
+
+include:
+  - component: $CI_SERVER_FQDN/library/cicd/templates/mirroring/oci-repository@main
+    inputs:
+      stage: "test"
+      src-auth-file: "/tmp/config.json"
+      dest-auth-file: "/tmp/config.json"
+      src-oci-image: "$EXAMPLE_ENV_SRC"
+      dest-oci-image: "$EXAMPLE_ENV_DEST"
+  - local: 'templates/oci-cosign/template.yml'
+    inputs:
+      stage: "sign"
+      docker-config-file: "/tmp/config.json"
+      oci-image-ref: "$CI_REGISTRY_IMAGE/sign-example:latest"
+      cosign-key: "gitlab://$CI_PROJECT_ID"
+      cosign-sign-args: ""
+      cosign-attests-list: "cyclonedx|reports/docker-sbom.cyclonedx.json;spdxjson|reports/docker-sbom.native.json;custom|reports/custom.json"
+
+oci-sbom:
+  extends:
+    - .utils:toolkit:shared:package-cache
+  stage: test
+  image:
+    name: docker.io/anchore/syft:debug
+    entrypoint: [""]
+  variables:
+    DOCKER_CONFIG: "/tmp/"
+  needs:
+    - job: mirroring:oci-repository:core
+  before_script:
+    - !reference [ .utils:toolkit:shared:logs-scripts ]
+  script:
+    - OCI_SBOM_IMAGE="${CI_REGISTRY_IMAGE}/sign-example:latest"
+    - log_info "Extracting SBOM from ${OCI_SBOM_IMAGE}..."
+    - |
+      log_info "Syft version:"
+      /syft version
+    - mkdir -p -m 777 reports
+    - /syft scan ${TRACE+-vv} $OCI_SBOM_IMAGE --override-default-catalogers rpm-db-cataloger,alpm-db-cataloger,apk-db-cataloger,dpkg-db-cataloger,portage-cataloger --select-catalogers="-file" -o cyclonedx-json=reports/docker-sbom.cyclonedx.json -o json=reports/docker-sbom.native.json
+    - |
+      cat > reports/custom.json <<EOF
+      {
+        "type": "custom-test-attestation",
+        "status": "ok",
+        "message": "pipeline validation passed",
+        "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      }
+      EOF
+    - chmod a+r reports/docker-sbom.cyclonedx.json reports/docker-sbom.native.json reports/custom.json
+  artifacts:
+    name: "SBOM for docker from $CI_PROJECT_NAME on $CI_COMMIT_REF_SLUG"
+    expire_in: 1 week
+    when: always
+    paths:
+      - "reports/docker-sbom*"
+      - "reports/custom.json"
+    reports:
+      cyclonedx:
+        - "reports/docker-sbom.cyclonedx.json"
+  rules:
+    - !reference [ .utils:toolkit:shared:tagged, not ]
+    - when: on_success
+  tags:
+    - docker-builder
+
+.mirroring:oci-repository:public:extends:
+  tags:
+    - docker-builder
+
+.mirroring:oci-repository:public:rules-extends:
+  - !reference [ .utils:toolkit:shared:tagged, not ]
+  - when: on_success
+
+.sign:oci-cosign:public:needs:
+  - job: mirroring:oci-repository:core
+  - job: oci-sbom
+
+.sign:oci-cosign:public:extends:
+  tags:
+    - docker-builder
+
+.sign:oci-cosign:public:rules-extends:
+  - !reference [ .utils:toolkit:shared:tagged, not ]
+  - when: on_success

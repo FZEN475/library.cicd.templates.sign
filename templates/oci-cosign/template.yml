@@ -1,0 +1,212 @@
+# templates/sign/template.yml
+spec:
+  inputs:
+    oci-sign:
+      description: "Enable sign module"
+      type: boolean
+      default: true
+    cosign-image:
+      description: "cosign version to download"
+      type: string
+      default: "docker.io/jitesoft/cosign:v3.0.6"
+    docker-config-file:
+      description: "Path to Docker config.json"
+      type: string
+      default: "/root/.docker/config.json"
+    stage:
+      description: "Job stage"
+      type: string
+      default: "publish"
+    oci-image-ref:
+      description: "oci image to sign"
+      type: string
+      default: ""
+    cosign-sign-args:
+      description: "cosign sign args"
+      type: string
+      default: ""
+    cosign-verify-args:
+      description: "cosign verify args"
+      type: string
+      default: ""
+    cosign-attest-args:
+      description: "cosign attest args"
+      type: string
+      default: ""
+    cosign-verify-attest-args:
+      description: "cosign verify-attestation args"
+      type: string
+      default: ""
+    cosign-key:
+      description: "cosign sign --key"
+      type: string
+      default: ""
+    cosign-attests-list:
+      description: "Type: 'slsaprovenance|slsaprovenance02|slsaprovenance1|link|spdx|spdxjson|cyclonedx|vuln|openvex|custom' Example: 'type|predicate;type|predicate'"
+      type: string
+      default: ""
+    cosign-annotations:
+      description: Additional annotations to add to the signature
+      default: >-
+        --annotations "com.gitlab.ci.project.path=$CI_PROJECT_URL"
+        --annotations "com.gitlab.ci.user.name=$GITLAB_USER_NAME"
+        --annotations "com.gitlab.ci.pipeline.id=$CI_PIPELINE_ID"
+        --annotations "com.gitlab.ci.pipeline.url=$CI_PIPELINE_URL"
+        --annotations "com.gitlab.ci.job.id=$CI_JOB_ID"
+        --annotations "com.gitlab.ci.job.url=$CI_JOB_URL"
+        --annotations "com.gitlab.ci.commit.sha=$CI_COMMIT_SHA"
+        --annotations "com.gitlab.ci.commit.ref.name=$CI_COMMIT_REF_NAME"
+        --annotations "com.gitlab.ci.runner.id=$CI_RUNNER_ID"
+        --annotations "com.gitlab.ci.runner.version=$CI_RUNNER_VERSION"
+        --annotations "com.gitlab.ci.job.started-at=$CI_JOB_STARTED_AT"
+        --annotations "com.gitlab.ci.registry.image=$docker_image"
+        --annotations "org.opencontainers.image.source=$CI_PROJECT_URL"
+        --annotations "org.opencontainers.image.revision=$CI_COMMIT_SHA"
+        --annotations "tag=$docker_tag"
+
+---
+
+include:
+  - local: templates/sign-core/template.yml
+
+variables:
+  COSIGN_IMAGE: $[[ inputs.cosign-image ]]
+  DOCKER_CONFIG_FILE: $[[ inputs.docker-config-file ]]
+  OCI_IMAGE_REF: $[[ inputs.oci-image-ref ]]
+  COSIGN_SIGN_ARGS: $[[ inputs.cosign-sign-args ]]
+  COSIGN_VERIFY_ARGS: $[[ inputs.cosign-verify-args ]]
+  COSIGN_ATTEST_ARGS: $[[ inputs.cosign-attest-args ]]
+  COSIGN_VERIFY_ATTEST_ARGS: $[[ inputs.cosign-verify-attest-args ]]
+  COSIGN_KEY: $[[ inputs.cosign-key ]]
+  COSIGN_ATTESTS: $[[ inputs.cosign-attests-list ]]
+  COSIGN_ANNOTATIONS: $[[ inputs.cosign-annotations ]]
+  
+.sign:oci-cosign:public:env-overwrite:
+  - |
+    true
+
+.sign:oci-cosign:public:rules-extends:
+  - !reference [ .utils:toolkit:shared:tagged, only ]
+  - when: on_success
+
+.sign:oci-cosign:public:extends:
+  tags: []
+
+.sign:oci-cosign:public:needs:
+  -
+
+.sign:oci-cosign:internal:scripts: |
+  if [ -n "$DOCKER_CONFIG_FILE" ] && [ -f "$DOCKER_CONFIG_FILE" ]; then
+    DIR="$(dirname "$DOCKER_CONFIG_FILE")"
+  
+    if [ -d "$DIR" ]; then
+      export DOCKER_CONFIG="$DIR"
+    fi
+  fi
+  
+  add_attestations() {
+    OLD_IFS=$IFS
+    IFS=';'
+    
+    for item in ${COSIGN_ATTESTS:-}
+    do
+      IFS='|'
+      set -- $item
+      
+      type=$1
+      predicate=$2
+  
+      log_info "Attesting: type=$type predicate=$predicate"
+      
+      cosign attest \
+        ${COSIGN_ATTEST_ARGS:-} \
+        ${COSIGN_KEY:+--key=$COSIGN_KEY} \
+        --timeout 90s \
+        --predicate "$predicate" \
+        --type "$type" \
+        "$OCI_IMAGE_REF"
+    done
+      
+    IFS=$OLD_IFS
+  }
+  verify_attestations() {
+    if [ -z "${COSIGN_ATTESTS:-}" ]; then
+      log_info "No attestations to verify"
+    fi
+    
+    OLD_IFS=$IFS
+    IFS=';'
+    
+    for item in ${COSIGN_ATTESTS}
+    do
+      IFS='|'
+      set -- $item
+      
+      type=$1
+      
+      # безопасное имя файла (на случай / или :)
+      safe_type=$(echo "$type" | tr '/:' '_')
+      
+      log_info "Verifying attestation type=$type"
+      
+      cosign verify-attestation \
+        ${COSIGN_VERIFY_ATTEST_ARGS:-} \
+        ${COSIGN_KEY:+--key=$COSIGN_KEY} \
+        --type "$type" \
+        --output-file "reports/cosign-verify-attestation.${safe_type}.json" \
+        "$OCI_IMAGE_REF"
+    done
+    
+    IFS=$OLD_IFS
+  }
+
+sign:oci-cosign:core:
+  extends:
+    - .utils:toolkit:shared:package-cache
+    - .sign:oci-cosign:public:extends
+  image: $COSIGN_IMAGE
+  stage: $[[ inputs.stage ]]
+  variables:
+    GITLAB_HOST: "https://gitlab.fizn.ru"
+  needs:
+    - !reference [ .sign:oci-cosign:public:needs ]
+  before_script:
+    - !reference [ .utils:toolkit:shared:logs-scripts ]
+    - !reference [ .sign:oci-cosign:internal:scripts ]
+    - !reference [ .sign:oci-cosign:public:env-overwrite ]
+  script:
+    - mkdir -p reports
+    - export COSIGN_EXPERIMENTAL=1
+    - |
+      log_info "Подпись репозитория: ${OCI_IMAGE_REF}"
+      echo $COSIGN_ANNOTATIONS | xargs cosign sign \
+        ${COSIGN_SIGN_ARGS:-} \
+        ${COSIGN_KEY:+--key=$COSIGN_KEY} \
+        "${OCI_IMAGE_REF}"
+    - |
+      log_info "add attestations:"
+      add_attestations
+      log_info "verify attestations:"
+      verify_attestations
+    - |
+      log_info "verify: ${OCI_IMAGE_REF}"
+      cosign verify \
+        ${COSIGN_VERIFY_ARGS:-} \
+        ${COSIGN_KEY:+--key=$COSIGN_KEY} \
+        --output-file reports/cosign-verify.json \
+        "${OCI_IMAGE_REF}"       
+    - |
+      log_info "cosign tree:"
+      cosign tree "${OCI_IMAGE_REF}" | tee reports/cosign-tree.log
+  artifacts:
+    name: "cosign log for $CI_PROJECT_NAME on $CI_COMMIT_REF_SLUG"
+    expire_in: 1 week
+    when: always
+    paths:
+      - "reports/cosign-verify.json"
+      - "reports/cosign-verify-attestation.*.json"
+      - "reports/cosign-tree.log"
+  rules:
+    - if: '"$[[ inputs.oci-sign ]]" != "true"'
+      when: never
+    - !reference [ .sign:oci-cosign:public:rules-extends ]
