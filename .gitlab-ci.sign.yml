@@ -77,7 +77,7 @@ oci-sbom:
 
 .sign:oci-cosign:public:env-overwrite:
   - |
-    echo /etc/cosign/config.json
+    cat /etc/cosign/config.json
     echo "$SIGSTORE_OIDC_TOKEN"
     echo "$SIGSTORE_OIDC_TOKEN" \
     | cut -d '.' -f2 \
