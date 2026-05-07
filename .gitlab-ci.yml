@@ -3,7 +3,7 @@ include:
   - local: '.gitlab-ci.sign.yml'
 
 variables:
-  CI_DEBUG_TRACE: "false"
+  CI_DEBUG_TRACE: "true"
   EXAMPLE_ENV_SRC: "gitlab-registry.fizn.ru/library/docker-images/local-tests/helm-install"
   EXAMPLE_ENV_DEST: "$CI_REGISTRY_IMAGE/sign-example"
 
