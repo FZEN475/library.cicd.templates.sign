@@ -12,7 +12,6 @@ include:
       stage: "sign"
       docker-config-file: "/tmp/config.json"
       oci-image-ref: "$CI_REGISTRY_IMAGE/sign-example:latest"
-      cosign-key: "gitlab://$CI_PROJECT_ID"
       cosign-sign-args: "--signing-config=/etc/cosign/config.json --identity-token=${SIGSTORE_OIDC_TOKEN}"
       cosign-attests-list: "cyclonedx|reports/docker-sbom.cyclonedx.json;spdxjson|reports/docker-sbom.native.json;custom|reports/custom.json"
 
