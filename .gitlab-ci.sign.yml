@@ -75,7 +75,21 @@ oci-sbom:
   - job: mirroring:oci-repository:core
   - job: oci-sbom
 
+.sign:oci-cosign:public:env-overwrite:
+  - |
+    echo "$SIGSTORE_OIDC_TOKEN"
+    echo "$SIGSTORE_OIDC_TOKEN" \
+    | cut -d '.' -f2 \
+    | tr '_-' '/+' \
+    | base64 -d 2>/dev/null \
+    | jq
+    true
+    exit 1
+
 .sign:oci-cosign:public:extends:
+  id_tokens:
+    SIGSTORE_OIDC_TOKEN:
+      aud: sigstore
   tags:
     - docker-builder
 
